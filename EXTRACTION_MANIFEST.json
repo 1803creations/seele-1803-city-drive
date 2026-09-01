@@ -1,0 +1,285 @@
+{
+  "source": "https://www.seeles.ai/workspace/generation/11560789-ec3f-4b7b-a94c-ebbc87950bed?entry_source=home_nav&session_canvas_id=11560789-ec3f-4b7b-a94c-ebbc87950bed",
+  "extractedAt": "2026-08-31T20:36:58.864Z",
+  "files": [
+    {
+      "rel": "document/PROJECT_NOTE.md",
+      "bytes": 3814,
+      "chars": 3796,
+      "selected": 1,
+      "header": "assets / document / json\nMD",
+      "lang": "MD",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/core/actions.js",
+      "bytes": 16341,
+      "chars": 16331,
+      "selected": 7,
+      "header": "assets / games / city_drive / workspace / src / core / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/core/config.js",
+      "bytes": 6575,
+      "chars": 6575,
+      "selected": 8,
+      "header": "assets / games / city_drive / workspace / src / core / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/core/events.js",
+      "bytes": 1603,
+      "chars": 1601,
+      "selected": 9,
+      "header": "assets / games / city_drive / workspace / src / core / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/core/gameLoop.js",
+      "bytes": 25254,
+      "chars": 25228,
+      "selected": 10,
+      "header": "assets / games / city_drive / workspace / src / core / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/core/runtimeReports.js",
+      "bytes": 3227,
+      "chars": 3215,
+      "selected": 11,
+      "header": "assets / games / city_drive / workspace / src / core / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/core/selectors.js",
+      "bytes": 3049,
+      "chars": 3047,
+      "selected": 12,
+      "header": "assets / games / city_drive / workspace / src / core / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/core/state.js",
+      "bytes": 9443,
+      "chars": 9437,
+      "selected": 13,
+      "header": "assets / games / city_drive / workspace / src / core / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/core/utils.js",
+      "bytes": 9329,
+      "chars": 9329,
+      "selected": 14,
+      "header": "assets / games / city_drive / workspace / src / core / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/effects/VehicleEffects.js",
+      "bytes": 24229,
+      "chars": 24198,
+      "selected": 16,
+      "header": "assets / games / city_drive / workspace / src / effects / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/generated/ccds-data.js",
+      "bytes": 200011,
+      "chars": 200011,
+      "selected": 18,
+      "header": "assets / games / city_drive / workspace / src / generated / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/input/Keyboard.js",
+      "bytes": 2432,
+      "chars": 2432,
+      "selected": 20,
+      "header": "assets / games / city_drive / workspace / src / input / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/missions/MissionLayouts.js",
+      "bytes": 7222,
+      "chars": 7220,
+      "selected": 22,
+      "header": "assets / games / city_drive / workspace / src / missions / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/missions/MissionRuntime.js",
+      "bytes": 11952,
+      "chars": 11952,
+      "selected": 23,
+      "header": "assets / games / city_drive / workspace / src / missions / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/physics/World.js",
+      "bytes": 43039,
+      "chars": 42974,
+      "selected": 25,
+      "header": "assets / games / city_drive / workspace / src / physics / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/scene/CityLoader.js",
+      "bytes": 36955,
+      "chars": 36941,
+      "selected": 27,
+      "header": "assets / games / city_drive / workspace / src / scene / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/scene/MenuPresentation.js",
+      "bytes": 5541,
+      "chars": 5541,
+      "selected": 28,
+      "header": "assets / games / city_drive / workspace / src / scene / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/scene/World.js",
+      "bytes": 11998,
+      "chars": 11992,
+      "selected": 29,
+      "header": "assets / games / city_drive / workspace / src / scene / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/traffic/RtcLaneData.js",
+      "bytes": 34265,
+      "chars": 34263,
+      "selected": 31,
+      "header": "assets / games / city_drive / workspace / src / traffic / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/traffic/TrafficSystem.js",
+      "bytes": 82695,
+      "chars": 82579,
+      "selected": 32,
+      "header": "assets / games / city_drive / workspace / src / traffic / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/ui/domHelpers.js",
+      "bytes": 9183,
+      "chars": 9170,
+      "selected": 34,
+      "header": "assets / games / city_drive / workspace / src / ui / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/ui/HUD.js",
+      "bytes": 27814,
+      "chars": 27797,
+      "selected": 35,
+      "header": "assets / games / city_drive / workspace / src / ui / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/ui/Router.js",
+      "bytes": 82276,
+      "chars": 82177,
+      "selected": 36,
+      "header": "assets / games / city_drive / workspace / src / ui / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/ui/UnityLayoutMapper.js",
+      "bytes": 16172,
+      "chars": 16166,
+      "selected": 37,
+      "header": "assets / games / city_drive / workspace / src / ui / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/main.js",
+      "bytes": 9214,
+      "chars": 9204,
+      "selected": 38,
+      "header": "assets / games / city_drive / workspace / src / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/src/style.css",
+      "bytes": 104857,
+      "chars": 104655,
+      "selected": 39,
+      "header": "assets / games / city_drive / workspace / src / css\nCSS",
+      "lang": "CSS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/index.html",
+      "bytes": 9157,
+      "chars": 9151,
+      "selected": 40,
+      "header": "assets / games / city_drive / workspace / html\nHTML",
+      "lang": "HTML",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/workspace/package-lock.json",
+      "bytes": 0,
+      "chars": 0,
+      "selected": 41,
+      "header": "assets / games / city_drive / workspace / json",
+      "lang": "",
+      "empty": true
+    },
+    {
+      "rel": "games/city_drive/workspace/package.json",
+      "bytes": 0,
+      "chars": 0,
+      "selected": 42,
+      "header": "assets / games / city_drive / workspace / json",
+      "lang": "",
+      "empty": true
+    },
+    {
+      "rel": "games/city_drive/workspace/vite.config.js",
+      "bytes": 90,
+      "chars": 90,
+      "selected": 43,
+      "header": "assets / games / city_drive / workspace / js\nJS",
+      "lang": "JS",
+      "empty": false
+    },
+    {
+      "rel": "games/city_drive/city_drive.html",
+      "bytes": 0,
+      "chars": 0,
+      "selected": 44,
+      "header": "assets / games / city_drive / json\nHTML",
+      "lang": "",
+      "empty": true
+    }
+  ]
+}

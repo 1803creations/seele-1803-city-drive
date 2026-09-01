@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>City Drive — Open City Driving</title>
+    <link rel="icon" href='data:image/svg+xml,%3Csvg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"%3E%3Crect width="64" height="64" rx="12" fill="%23281912"/%3E%3Cpath d="M14 39l5-13c1.2-3 4.1-5 7.4-5h11.2c3.3 0 6.2 2 7.4 5l5 13" fill="%23f3a315"/%3E%3Crect x="10" y="35" width="44" height="10" rx="4" fill="%23f8d184"/%3E%3Ccircle cx="19" cy="45" r="5" fill="%23281912"/%3E%3Ccircle cx="45" cy="45" r="5" fill="%23281912"/%3E%3C/svg%3E' />
+    <link rel="stylesheet" href="./src/style.css" />
+    <script type="module" src="./src/main.js"></script>
+  </head>
+  <body>
+    <div id="loading-screen" class="loading-screen">
+      <div class="loading-vignette"></div>
+      <div class="loading-road-lines">
+        <div class="road-line"></div>
+        <div class="road-line"></div>
+        <div class="road-line"></div>
+        <div class="road-line"></div>
+        <div class="road-line"></div>
+      </div>
+      <div class="loading-sparks">
+        <div class="spark"></div>
+        <div class="spark"></div>
+        <div class="spark"></div>
+        <div class="spark"></div>
+        <div class="spark"></div>
+        <div class="spark"></div>
+        <div class="spark"></div>
+        <div class="spark"></div>
+      </div>
+      <div class="loading-content">
+        <div class="loading-logo-glow"></div>
+        <h2 class="loading-title">CITY DRIVE<br><span class="loading-title-accent">OPEN CITY</span></h2>
+        <div class="loading-divider"></div>
+        <div class="loading-bar-track"><div id="loading-bar-fill" class="loading-bar-fill"><div class="loading-bar-shine"></div></div></div>
+        <p id="loading-status" class="loading-status">Initializing...</p>
+        <div class="loading-hint">BONECRACKER GAMES</div>
+      </div>
+    </div>
+    <div id="app" class="app-shell is-loading" data-route="main">
+      <header class="app-header">
+        <div>
+          <p class="eyebrow">Open City Drive</p>
+          <h1>City Drive</h1>
+        </div>
+        <div class="header-stats">
+          <div class="pill">
+            <span>Cash</span>
+            <strong id="cash-value">$0</strong>
+          </div>
+          <div class="pill">
+            <span>Vehicle</span>
+            <strong id="vehicle-value">-</strong>
+          </div>
+          <div class="pill">
+            <span>Mode</span>
+            <strong id="route-value">Main Menu</strong>
+          </div>
+        </div>
+      </header>
+
+      <main class="app-main">
+        <section class="scene-panel">
+          <div class="scene-copy">
+            <p class="eyebrow" id="scene-kicker">Main Menu</p>
+            <h2 id="scene-title">Preparing Session</h2>
+            <p id="scene-description" class="scene-description">Loading vehicles, menu data, and scene resources.</p>
+          </div>
+          <div id="scene-root" class="scene-root"></div>
+          <div id="hud-overlay" class="hud-overlay"></div>
+          <div id="gameplay-ui" class="gameplay-ui">
+            <div class="gameplay-hud">
+              <div class="gameplay-cluster gameplay-cluster-left">
+                <div class="speedometer-card">
+                  <div class="speedometer-arc"></div>
+                  <div class="speedometer-center">
+                    <div id="game-speed-value" class="speedometer-value">0</div>
+                    <div class="speedometer-unit">KM/H</div>
+                  </div>
+                  <div id="game-gear-value" class="speedometer-gear">1</div>
+                </div>
+                <div class="felony-tag">FELONY</div>
+                <div class="minimap-card">
+                  <div class="minimap-grid"></div>
+                  <div id="minimap-dot" class="minimap-dot"></div>
+                </div>
+              </div>
+              <div class="gameplay-cluster gameplay-cluster-right">
+                <div class="gameplay-top-stack">
+                  <div class="gameplay-icon-row">
+                    <button id="game-camera-btn" class="gameplay-icon-tile" type="button">CAM</button>
+                    <button id="game-pause-btn" class="gameplay-icon-tile" type="button">II</button>
+                  </div>
+                  <div class="gameplay-cash-tile">
+                    <span>$</span>
+                    <strong id="gameplay-cash-value">0</strong>
+                  </div>
+                </div>
+                <div class="gameplay-side-icons">
+                  <button class="gameplay-side-btn" type="button">≡</button>
+                  <button class="gameplay-side-btn" type="button">▣</button>
+                </div>
+              </div>
+              <div class="health-rail">
+                <span>HEALTH</span>
+              </div>
+              <div class="gameplay-mission-banner">
+                <div id="gameplay-mission-title" class="gameplay-mission-title">RACE CHALLENGE</div>
+                <div id="gameplay-mission-copy" class="gameplay-mission-copy">WIN THE RACE!</div>
+              </div>
+              <div class="gameplay-time-chip">
+                <span>TIME:</span>
+                <strong id="gameplay-time-value">0:00</strong>
+              </div>
+            </div>
+          </div>
+          <div id="main-menu-ui" class="main-menu-ui">
+            <div id="main-menu-canvas" class="main-menu-canvas">
+              <div id="main-menu-topbar" class="main-menu-topbar">
+                <div id="menu-banner-left" class="menu-banner menu-banner-left">
+                  <span id="main-menu-mode">MAIN MENU</span>
+                </div>
+                <div id="main-menu-brand" class="main-menu-brand">
+                  <div id="main-menu-brand-line-1" class="main-menu-brand-line">CITY DRIVE | OPEN CITY DRIVING</div>
+                  <div id="main-menu-brand-line-2" class="main-menu-brand-line">EXPLORE</div>
+                  <div id="main-menu-brand-line-3" class="main-menu-brand-line">DRIVE FREE</div>
+                </div>
+                <div id="menu-banner-right" class="menu-banner menu-banner-right">
+                  <span id="player-name-value" class="menu-player-name">NEW CITY DRIVE PLAYER</span>
+                  <strong id="main-cash-value" class="menu-player-cash">$ 0</strong>
+                </div>
+              </div>
+
+              <section id="profile-panel" class="profile-panel" aria-live="polite">
+                <div class="profile-panel-title" id="profile-panel-title">WELCOME!</div>
+                <p id="profile-panel-copy" class="profile-panel-copy">WELCOME TO CITY CAR DRIVING SIMULATOR!</p>
+                <label class="profile-panel-label" for="profile-name-input">PLAYER NAME</label>
+                <input id="profile-name-input" class="profile-name-input" type="text" maxlength="24" value="" />
+                <button id="profile-submit-btn" class="profile-submit-btn" type="button">SUBMIT</button>
+              </section>
+
+              <div id="utility-bar" class="utility-bar" aria-label="Main Menu Utilities">
+                <button id="utility-controls-btn" class="utility-pill" type="button">CONTROLS</button>
+                <button id="utility-imagefx-btn" class="utility-pill" type="button">IMAGE EFFECTS</button>
+                <button id="utility-shadows-btn" class="utility-pill" type="button">SHADOWS</button>
+              </div>
+
+              <div id="main-menu-side" class="main-menu-side">
+                <button id="testing-toggle" class="testing-toggle" type="button" aria-label="Toggle Testing Panel">&lt;</button>
+                <div id="testing-panel" class="testing-panel">
+                  <p id="testing-title" class="testing-title">TESTING PANEL</p>
+                  <div class="testing-buttons">
+                    <button id="add-money-btn" class="testing-btn" type="button">ADD MONEY</button>
+                    <button id="unlock-cars-btn" class="testing-btn" type="button">UNLOCK ALL CARS</button>
+                    <button id="reset-save-btn" class="testing-btn" type="button">RESET SAVE</button>
+                  </div>
+                </div>
+              </div>
+
+              <nav id="main-menu-nav" class="main-menu-nav" aria-label="Main Menu">
+                <button id="main-drive-btn" class="menu-action menu-action-drive" type="button">DRIVE</button>
+                <button id="main-vehicles-btn" class="menu-action" type="button">VEHICLES</button>
+                <button id="main-customize-btn" class="menu-action" type="button">CUSTOMIZATION</button>
+                <button id="main-settings-btn" class="menu-action" type="button">SETTINGS</button>
+                <button id="main-quit-btn" class="menu-action menu-action-quit" type="button">QUIT</button>
+              </nav>
+              <div id="menu-page-layer" class="menu-page-layer" aria-live="polite"></div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="side-panel">
+          <div id="panel-content" class="panel-content"></div>
+        </aside>
+      </main>
+    </div>
+  </body>
+</html>
