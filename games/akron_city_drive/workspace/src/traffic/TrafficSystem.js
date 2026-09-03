@@ -19,7 +19,6 @@ import { CITY_WORLD_SCALE, MAIN_MENU_SPAWN } from "../core/config.js";
 import { state, save, physics, assets } from "../core/state.js";
 import { world } from "../scene/World.js";
 import { GROUP_NPC, GROUPS_NPC } from "../physics/World.js";
-import { RTC_LANES } from "./RtcLaneData.js";
 
 // --- Constants from Unity RTC sources ----------------------------------------
 
@@ -40,7 +39,7 @@ const MIN_SPAWN_SEPARATION = 15;     // CheckTraffic: no other vehicle within 15
 const INITIAL_VELOCITY_MS = 5;       // ActivateVehicle: 5 m/s VelocityChange
 
 // RTC_CarController defaults
-const MAXIMUM_SPEED = 160;           // km/h
+const MAXIMUM_SPEED = 128.75;        // 80 mph, stored internally as km/h
 const STEER_DIVISOR = 35;            // steerInputRaw = angleDiff / 35
 const LOOK_AHEAD = 0.125;            // lookAhead: 0.125
 const BOUNDS_FRONT = 2.5;            // bounds.front: 2.5
@@ -49,7 +48,7 @@ const RAYCAST_DISTANCE_RATE = 20;    // raycastDistanceRate: 20
 const STEER_ANGLE = 40;              // steerAngle: 40 degrees
 
 // RTC_Waypoint defaults
-const WAYPOINT_TARGET_SPEED = 80;    // targetSpeed: 80 km/h
+const WAYPOINT_TARGET_SPEED = 56;    // traffic cruises below the 80 mph top speed
 const WAYPOINT_RADIUS = 1.5;         // radius: 1.5
 
 // Input smoothing (RTC_CarController.Inputs: MoveTowards)
@@ -76,11 +75,28 @@ const ROAD_CHECK_DIRS = [
 const ROAD_CHECK_DISTANCE = 3;       // metres — horizontal wall proximity
 const MAX_SPAWN_ATTEMPTS = 12;       // max waypoints to try before giving up
 const RIGHT_LANE_OFFSET = 2.7;       // metres from road centerline
-const CONTROL_LOOKAHEAD = 15;        // stop when this close to a controlled waypoint
+const CONTROL_LOOKAHEAD = 42;        // start slowing early for red signals
 const CONTROL_STOP_HOLD = 1.1;       // seconds at stop signs
-const SIGNAL_CYCLE = 18;             // seconds, two-phase light cycle
-const SIGNAL_YELLOW = 2.4;           // seconds at the end of each green
+const SIGNAL_GREEN = 9;              // seconds
+const SIGNAL_YELLOW = 1;             // seconds
+const SIGNAL_PHASE = SIGNAL_GREEN + SIGNAL_YELLOW;
+const SIGNAL_CYCLE = SIGNAL_PHASE * 2;
 const SIGNAL_MIN_SPEED = 12;         // don't slam brakes once crawling through
+const AKRON_ROAD_LENGTH = 920;
+const AKRON_ROAD_HALF_LENGTH = AKRON_ROAD_LENGTH / 2;
+const AKRON_ROAD_HALF_WIDTH = 8;
+const AKRON_ROAD_MARGIN = 0.85;
+const AKRON_LANE_GUARD_MARGIN = 0.75;
+const ENABLE_TRAFFIC_WALL_AVOIDANCE = false;
+const AKRON_NORTH_SOUTH_ROADS = [
+  { name: "Brown Street", x: -120 },
+  { name: "Main Street", x: 0 },
+  { name: "Arlington Street", x: 120 }
+];
+const AKRON_EAST_WEST_ROADS = [
+  { name: "Market Street", z: -80 },
+  { name: "Exchange Street", z: 80 }
+];
 
 // CCDS_AI_Cop police chase constants
 const POLICE_DETECTOR_RADIUS = 150;  // detectorRadius: increased for better re-acquisition
@@ -107,7 +123,10 @@ class RTCWaypoint {
     this.targetSpeed = targetSpeed;
     this.radius = WAYPOINT_RADIUS;
     this.nextWaypoint = null;
+    this.nextOptions = null;
     this.previousWaypoint = null;
+    this.laneIndex = -1;
+    this.roadNode = null;
     this.distanceToNext = 0;
     this.angleToNext = 0;
     this.desiredSpeedForNext = targetSpeed;
@@ -147,6 +166,7 @@ class RTCVehicle {
     this.nextWaypoint = this.currentWaypoint?.nextWaypoint || null;
     this.pastWaypoint = this.currentWaypoint?.previousWaypoint || null;
     this.laneIndex = -1; // index into TrafficSystem._lanes
+    this.pendingIntersectionExit = null;
 
     // Smoothed inputs (RTC_CarController: throttleInput, brakeInput, steerInput)
     this.throttleInput = 0;
@@ -372,8 +392,9 @@ export class TrafficSystem {
     this._roadMarkingGroup.clear();
     if (!this._roadMarkingGroup.parent) world.root.add(this._roadMarkingGroup);
 
-    for (let li = 0; li < RTC_LANES.length; li++) {
-      const laneData = RTC_LANES[li];
+    const laneSource = this._buildAkronLaneData(fallbackY);
+    for (let li = 0; li < laneSource.length; li++) {
+      const laneData = laneSource[li];
       if (!laneData.w || laneData.w.length < 2) {
         this._lanes.push(null); // placeholder to keep index alignment
         continue;
@@ -392,14 +413,21 @@ export class TrafficSystem {
       this._lanes.push({
         waypoints: path,
         connectsTo: laneData.c,
+        name: laneData.name,
+        axis: laneData.axis,
+        direction: laneData.direction,
+        roadName: laneData.roadName,
         startPos: path[0].position,
         endPos: last,
         endHeading
       });
+      for (const wp of path) wp.laneIndex = this._lanes.length - 1;
       this._waypointPaths.push(path);
     }
 
+    this._wireAkronIntersectionChoices();
     this._buildTrafficControls();
+    this._updateTrafficSignalVisuals();
 
     // Compute effective spawn radius
     this._effectiveSpawnRadius = SPAWN_RADIUS;
@@ -421,8 +449,61 @@ export class TrafficSystem {
     }
 
     // eslint-disable-next-line no-console
-    console.log(`[Traffic] Generated ${this._waypointPaths.length} lanes (of ${RTC_LANES.length} total), ` +
+    console.log(`[Traffic] Generated ${this._waypointPaths.length} Akron lanes, ` +
       `total waypoints: ${this._waypointPaths.reduce((s, p) => s + p.length, 0)}`);
+  }
+
+  _buildAkronLaneData(fallbackY = MAIN_MENU_SPAWN.y) {
+    const o = RIGHT_LANE_OFFSET;
+    const half = AKRON_ROAD_HALF_LENGTH;
+    const lanes = [];
+
+    const wp = (px, pz, nodeKey = null) => {
+      const point = [px, fallbackY, pz];
+      if (nodeKey) point.nodeKey = nodeKey;
+      return point;
+    };
+    const addLine = (name, points, meta) => lanes.push({
+      name,
+      w: points,
+      s: WAYPOINT_TARGET_SPEED,
+      c: null,
+      closed: false,
+      ...meta
+    });
+    const intersectionKey = (ns, ew) => `${ns.name}|${ew.name}`;
+    const sortedNs = [...AKRON_NORTH_SOUTH_ROADS].sort((a, b) => a.x - b.x);
+    const sortedEw = [...AKRON_EAST_WEST_ROADS].sort((a, b) => a.z - b.z);
+
+    for (const road of AKRON_NORTH_SOUTH_ROADS) {
+      const roadX = MAIN_MENU_SPAWN.x + road.x;
+      addLine(`${road.name} southbound straight`, [
+        wp(roadX - o, MAIN_MENU_SPAWN.z - half),
+        ...sortedEw.map((ew) => wp(roadX - o, MAIN_MENU_SPAWN.z + ew.z, intersectionKey(road, ew))),
+        wp(roadX - o, MAIN_MENU_SPAWN.z + half)
+      ], { axis: "northsouth", direction: "southbound", roadName: road.name });
+      addLine(`${road.name} northbound straight`, [
+        wp(roadX + o, MAIN_MENU_SPAWN.z + half),
+        ...[...sortedEw].reverse().map((ew) => wp(roadX + o, MAIN_MENU_SPAWN.z + ew.z, intersectionKey(road, ew))),
+        wp(roadX + o, MAIN_MENU_SPAWN.z - half)
+      ], { axis: "northsouth", direction: "northbound", roadName: road.name });
+    }
+
+    for (const road of AKRON_EAST_WEST_ROADS) {
+      const roadZ = MAIN_MENU_SPAWN.z + road.z;
+      addLine(`${road.name} eastbound straight`, [
+        wp(MAIN_MENU_SPAWN.x - half, roadZ + o),
+        ...sortedNs.map((ns) => wp(MAIN_MENU_SPAWN.x + ns.x, roadZ + o, intersectionKey(ns, road))),
+        wp(MAIN_MENU_SPAWN.x + half, roadZ + o)
+      ], { axis: "eastwest", direction: "eastbound", roadName: road.name });
+      addLine(`${road.name} westbound straight`, [
+        wp(MAIN_MENU_SPAWN.x + half, roadZ - o),
+        ...[...sortedNs].reverse().map((ns) => wp(MAIN_MENU_SPAWN.x + ns.x, roadZ - o, intersectionKey(ns, road))),
+        wp(MAIN_MENU_SPAWN.x - half, roadZ - o)
+      ], { axis: "eastwest", direction: "westbound", roadName: road.name });
+    }
+
+    return lanes;
   }
 
   _buildOpenLanePath(laneData, fallbackY = 0) {
@@ -431,34 +512,53 @@ export class TrafficSystem {
     const candidates = [];
     const MAX_SEG = 15; // subdivide long segments for smoother steering
 
-    for (let i = 0; i < rawWps.length; i++) {
+    const segmentCount = laneData.closed ? rawWps.length : rawWps.length - 1;
+    for (let i = 0; i < segmentCount; i++) {
       const ax = rawWps[i][0], ay = rawWps[i][1], az = rawWps[i][2];
       const speed = Array.isArray(speeds) ? (speeds[i] || WAYPOINT_TARGET_SPEED) : (speeds || WAYPOINT_TARGET_SPEED);
-
-      if (i < rawWps.length - 1) {
-        const bx = rawWps[i + 1][0], by = rawWps[i + 1][1], bz = rawWps[i + 1][2];
-        const dist = Math.hypot(bx - ax, bz - az);
-        const segs = Math.max(1, Math.ceil(dist / MAX_SEG));
-        for (let s = 0; s < segs; s++) {
-          const t = s / segs;
-          const pos = new THREE.Vector3(
-            ax + (bx - ax) * t,
-            ay + (by - ay) * t,
-            az + (bz - az) * t
-          );
-          pos.copy(this._snapToRoadSurface(pos, fallbackY));
-          candidates.push(new RTCWaypoint(pos, speed));
-        }
-      } else {
-        // Last waypoint in the lane
-        const pos = new THREE.Vector3(ax, ay, az);
+      const b = rawWps[(i + 1) % rawWps.length];
+      const bx = b[0], by = b[1], bz = b[2];
+      const dist = Math.hypot(bx - ax, bz - az);
+      const segs = Math.max(1, Math.ceil(dist / MAX_SEG));
+      for (let s = 0; s < segs; s++) {
+        const t = s / segs;
+        const pos = new THREE.Vector3(
+          ax + (bx - ax) * t,
+          ay + (by - ay) * t,
+          az + (bz - az) * t
+        );
         pos.copy(this._snapToRoadSurface(pos, fallbackY));
-        candidates.push(new RTCWaypoint(pos, speed));
+        const wp = new RTCWaypoint(pos, speed);
+        if (s === 0 && rawWps[i].nodeKey) {
+          wp.roadNode = {
+            key: rawWps[i].nodeKey,
+            axis: laneData.axis,
+            direction: laneData.direction,
+            roadName: laneData.roadName
+          };
+          wp.radius = Math.max(wp.radius, 4.5);
+        }
+        candidates.push(wp);
       }
+    }
+    if (!laneData.closed) {
+      const last = rawWps[rawWps.length - 1];
+      const pos = new THREE.Vector3(last[0], last[1], last[2]);
+      pos.copy(this._snapToRoadSurface(pos, fallbackY));
+      const wp = new RTCWaypoint(pos, Array.isArray(speeds) ? (speeds[rawWps.length - 1] || WAYPOINT_TARGET_SPEED) : (speeds || WAYPOINT_TARGET_SPEED));
+      if (last.nodeKey) {
+        wp.roadNode = {
+          key: last.nodeKey,
+          axis: laneData.axis,
+          direction: laneData.direction,
+          roadName: laneData.roadName
+        };
+        wp.radius = Math.max(wp.radius, 4.5);
+      }
+      candidates.push(wp);
     }
 
     this._addRoadCenterline(candidates);
-    this._offsetWaypointsToRightLane(candidates, fallbackY);
 
     // Validate: skip waypoints inside buildings, skip blocked segments
     const waypoints = [];
@@ -474,10 +574,15 @@ export class TrafficSystem {
 
     if (waypoints.length < 2) return null;
 
-    // Link sequentially (OPEN path — last wp has nextWaypoint = null)
+    // Link sequentially. Akron turn choices are wired separately at explicit
+    // road nodes so AI only turns from intersection entry points.
     for (let i = 0; i < waypoints.length - 1; i++) {
       waypoints[i].nextWaypoint = waypoints[i + 1];
       waypoints[i + 1].previousWaypoint = waypoints[i];
+    }
+    if (laneData.closed && waypoints.length > 2) {
+      waypoints[waypoints.length - 1].nextWaypoint = waypoints[0];
+      waypoints[0].previousWaypoint = waypoints[waypoints.length - 1];
     }
     for (const wp of waypoints) wp.update();
 
@@ -496,12 +601,137 @@ export class TrafficSystem {
       dir.normalize();
 
       const candidate = _tv[1].copy(waypoints[i].position);
-      candidate.x += dir.z * RIGHT_LANE_OFFSET;
-      candidate.z -= dir.x * RIGHT_LANE_OFFSET;
+      candidate.x -= dir.z * RIGHT_LANE_OFFSET;
+      candidate.z += dir.x * RIGHT_LANE_OFFSET;
       candidate.copy(this._snapToRoadSurface(candidate, fallbackY));
 
       if (this._isPositionOnRoad(candidate)) {
         waypoints[i].position.copy(candidate);
+      }
+    }
+  }
+
+  _isAkronRoadPosition(pos) {
+    if (!pos) return false;
+    const localX = pos.x - MAIN_MENU_SPAWN.x;
+    const localZ = pos.z - MAIN_MENU_SPAWN.z;
+    const roadLimit = AKRON_ROAD_HALF_LENGTH + AKRON_ROAD_MARGIN;
+    const roadHalfWidth = AKRON_ROAD_HALF_WIDTH + AKRON_ROAD_MARGIN;
+
+    for (const road of AKRON_NORTH_SOUTH_ROADS) {
+      if (Math.abs(localX - road.x) <= roadHalfWidth && Math.abs(localZ) <= roadLimit) return true;
+    }
+    for (const road of AKRON_EAST_WEST_ROADS) {
+      if (Math.abs(localZ - road.z) <= roadHalfWidth && Math.abs(localX) <= roadLimit) return true;
+    }
+    return false;
+  }
+
+  _clampAkronRoadPosition(pos) {
+    const localX = pos.x - MAIN_MENU_SPAWN.x;
+    const localZ = pos.z - MAIN_MENU_SPAWN.z;
+    const roadLimit = AKRON_ROAD_HALF_LENGTH - AKRON_ROAD_MARGIN;
+    const laneHalfWidth = AKRON_ROAD_HALF_WIDTH - AKRON_LANE_GUARD_MARGIN;
+
+    let best = null;
+    const consider = (x, z) => {
+      const cx = THREE.MathUtils.clamp(x, -roadLimit, roadLimit);
+      const cz = THREE.MathUtils.clamp(z, -roadLimit, roadLimit);
+      const dx = localX - cx;
+      const dz = localZ - cz;
+      const distSq = dx * dx + dz * dz;
+      if (!best || distSq < best.distSq) best = { x: cx, z: cz, distSq };
+    };
+
+    for (const road of AKRON_NORTH_SOUTH_ROADS) {
+      consider(
+        THREE.MathUtils.clamp(localX, road.x - laneHalfWidth, road.x + laneHalfWidth),
+        localZ
+      );
+    }
+    for (const road of AKRON_EAST_WEST_ROADS) {
+      consider(
+        localX,
+        THREE.MathUtils.clamp(localZ, road.z - laneHalfWidth, road.z + laneHalfWidth)
+      );
+    }
+
+    if (!best) return pos.clone();
+    return new THREE.Vector3(MAIN_MENU_SPAWN.x + best.x, pos.y, MAIN_MENU_SPAWN.z + best.z);
+  }
+
+  _isIntersectionTurn(vehicle) {
+    return Boolean(vehicle.pendingIntersectionExit)
+      || Boolean(vehicle.currentWaypoint?.roadNode)
+      || Boolean(vehicle.pastWaypoint?.roadNode);
+  }
+
+  _currentLaneSegment(vehicle) {
+    const from = vehicle.pastWaypoint?.position || vehicle.currentWaypoint?.position;
+    const to = vehicle.pastWaypoint ? vehicle.currentWaypoint?.position : vehicle.nextWaypoint?.position;
+    if (!from || !to || from.distanceToSquared(to) < 0.001) return null;
+    return { from, to };
+  }
+
+  _projectPointToSegment(point, from, to) {
+    const segment = _tv[8].subVectors(to, from);
+    segment.y = 0;
+    const lenSq = segment.lengthSq();
+    if (lenSq < 0.001) return point.clone();
+    const toPoint = _tv[9].subVectors(point, from);
+    toPoint.y = 0;
+    const t = THREE.MathUtils.clamp(toPoint.dot(segment) / lenSq, 0, 1);
+    return from.clone().addScaledVector(segment, t);
+  }
+
+  _wireAkronIntersectionChoices() {
+    const nodes = new Map();
+    for (const lane of this._lanes) {
+      if (!lane) continue;
+      for (const wp of lane.waypoints) {
+        if (!wp.roadNode || !wp.nextWaypoint || !wp.previousWaypoint) continue;
+        if (!nodes.has(wp.roadNode.key)) nodes.set(wp.roadNode.key, []);
+        nodes.get(wp.roadNode.key).push(wp);
+      }
+    }
+
+    for (const nodeWps of nodes.values()) {
+      for (const wp of nodeWps) {
+        const approach = _tv[0].subVectors(wp.position, wp.previousWaypoint.position);
+        approach.y = 0;
+        if (approach.lengthSq() < 0.001) continue;
+        approach.normalize();
+
+        const options = [{ waypoint: wp.nextWaypoint, laneIndex: wp.laneIndex, weight: 9 }];
+        for (const other of nodeWps) {
+          if (other === wp || !other.nextWaypoint) continue;
+
+          const outgoing = _tv[1].subVectors(other.nextWaypoint.position, other.position);
+          outgoing.y = 0;
+          if (outgoing.lengthSq() < 0.001) continue;
+          outgoing.normalize();
+
+          const dot = approach.dot(outgoing);
+          if (dot < -0.25) continue;
+
+          const cross = approach.x * outgoing.z - approach.z * outgoing.x;
+          const isStraight = Math.abs(cross) < 0.2 && dot > 0.75;
+          const isTurn = Math.abs(cross) > 0.45;
+          if (!isStraight && !isTurn) continue;
+
+          const candidate = other;
+          if (!this._isSegmentClear(wp.position, candidate.position)) continue;
+          if (!options.some((option) => option.waypoint === candidate)) {
+            options.push({
+              waypoint: candidate,
+              nextWaypoint: other.nextWaypoint,
+              laneIndex: other.laneIndex,
+              weight: isStraight ? 5 : 2
+            });
+          }
+        }
+
+        wp.nextOptions = options.length > 1 ? options : null;
       }
     }
   }
@@ -533,57 +763,29 @@ export class TrafficSystem {
     this._controlGroup.clear();
     if (this._waypointPaths.length === 0) return;
 
-    const cellSize = 18;
-    const cells = new Map();
-    for (const path of this._waypointPaths) {
-      for (let i = 2; i < path.length - 2; i += 3) {
-        const wp = path[i];
-        const key = `${Math.round(wp.position.x / cellSize)},${Math.round(wp.position.z / cellSize)}`;
-        let cell = cells.get(key);
-        if (!cell) {
-          cell = { points: [], lanes: new Set(), x: 0, y: 0, z: 0 };
-          cells.set(key, cell);
-        }
-        cell.points.push(wp);
-        cell.x += wp.position.x;
-        cell.y += wp.position.y;
-        cell.z += wp.position.z;
+    const controls = [];
+    for (const ns of AKRON_NORTH_SOUTH_ROADS) {
+      for (const ew of AKRON_EAST_WEST_ROADS) {
+        controls.push({
+          id: controls.length,
+          position: new THREE.Vector3(
+            MAIN_MENU_SPAWN.x + ns.x,
+            MAIN_MENU_SPAWN.y,
+            MAIN_MENU_SPAWN.z + ew.z
+          ),
+          type: "signal",
+          phase: "northsouth",
+          lights: null
+        });
       }
     }
 
-    const clusters = Array.from(cells.values())
-      .filter((cell) => cell.points.length >= 5)
-      .map((cell) => {
-        const count = cell.points.length;
-        return {
-          position: new THREE.Vector3(cell.x / count, cell.y / count, cell.z / count),
-          weight: count
-        };
-      })
-      .sort((a, b) => {
-        const da = a.position.distanceToSquared(MAIN_MENU_SPAWN);
-        const db = b.position.distanceToSquared(MAIN_MENU_SPAWN);
-        return da - db || b.weight - a.weight;
-      });
-
-    const controls = [];
-    for (const cluster of clusters) {
-      if (controls.some((control) => control.position.distanceTo(cluster.position) < 38)) continue;
-      controls.push({
-        id: controls.length,
-        position: cluster.position.clone(),
-        type: controls.length % 4 === 3 ? "stop" : "signal",
-        phase: controls.length % 2 === 0 ? "northsouth" : "eastwest",
-        lights: null
-      });
-      if (controls.length >= 72) break;
-    }
-
     for (const control of controls) {
-      this._controlGroup.add(control.type === "stop"
-        ? this._createStopSign(control)
-        : this._createTrafficLight(control));
-      if (control.type === "signal") this._signals.push(control);
+      if (control.type === "signal") {
+        this._signals.push(control);
+      } else {
+        this._controlGroup.add(this._createStopSign(control));
+      }
     }
 
     for (const path of this._waypointPaths) {
@@ -591,7 +793,7 @@ export class TrafficSystem {
       for (let i = 1; i < path.length - 1; i++) {
         const wp = path[i];
         let nearest = null;
-        let nearestDist = 13;
+        let nearestDist = 18;
         for (const control of controls) {
           const dist = wp.position.distanceTo(control.position);
           if (dist < nearestDist) {
@@ -622,34 +824,60 @@ export class TrafficSystem {
 
     const poleMat = new THREE.MeshStandardMaterial({ color: 0x252525, roughness: 0.72 });
     const housingMat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.55 });
-    const redMat = new THREE.MeshStandardMaterial({ color: 0x330000, emissive: 0xff1111, emissiveIntensity: 0.25 });
-    const yellowMat = new THREE.MeshStandardMaterial({ color: 0x332600, emissive: 0xffd322, emissiveIntensity: 0.1 });
-    const greenMat = new THREE.MeshStandardMaterial({ color: 0x003300, emissive: 0x22ff55, emissiveIntensity: 0.1 });
+    control.lights = { red: [], yellow: [], green: [] };
 
-    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.2, 10), poleMat);
-    pole.position.set(5.3, 1.6, 5.3);
-    group.add(pole);
+    const addSignalHead = (poleX, poleZ, rotationY, approachPhase) => {
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 3.2, 10), poleMat);
+      pole.position.set(poleX, 1.6, poleZ);
+      group.add(pole);
 
-    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.46, 1.16, 0.24), housingMat);
-    housing.position.set(5.3, 3.05, 5.3);
-    housing.rotation.y = control.phase === "eastwest" ? Math.PI / 2 : 0;
-    group.add(housing);
+      const armDir = new THREE.Vector3(0, 0, -1).applyAxisAngle(new THREE.Vector3(0, 1, 0), rotationY);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 4.4), poleMat);
+      arm.position.set(poleX, 3.35, poleZ);
+      arm.position.addScaledVector(armDir, 2.2);
+      arm.rotation.y = rotationY;
+      group.add(arm);
 
-    const makeLamp = (mat, y) => {
-      const lamp = new THREE.Mesh(new THREE.CircleGeometry(0.13, 18), mat);
-      lamp.position.copy(housing.position);
-      lamp.position.y += y;
-      lamp.rotation.copy(housing.rotation);
-      lamp.rotation.y += Math.PI;
-      group.add(lamp);
-      return mat;
+      const housing = new THREE.Mesh(new THREE.BoxGeometry(0.46, 1.16, 0.24), housingMat);
+      housing.position.set(poleX, 2.9, poleZ);
+      housing.position.addScaledVector(armDir, 4.4);
+      housing.rotation.y = rotationY;
+      group.add(housing);
+
+      const faceOffset = new THREE.Vector3(0, 0, -0.17).applyAxisAngle(new THREE.Vector3(0, 1, 0), rotationY);
+      const makeLamp = (key, darkColor, y, color) => {
+        const mat = new THREE.MeshBasicMaterial({ color: darkColor });
+        const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.17, 18, 12), mat);
+        lamp.position.copy(housing.position).add(faceOffset);
+        lamp.position.y += y;
+        group.add(lamp);
+
+        const glow = new THREE.Mesh(
+          new THREE.CircleGeometry(0.34, 24),
+          new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            side: THREE.DoubleSide
+          })
+        );
+        glow.position.copy(lamp.position);
+        glow.rotation.y = rotationY;
+        group.add(glow);
+        control.lights[key].push({ material: mat, mesh: lamp, glow, litColor: color, darkColor, phase: approachPhase });
+      };
+
+      makeLamp("red", 0x260000, 0.31, 0xff2222);
+      makeLamp("yellow", 0x2a2100, 0, 0xffd322);
+      makeLamp("green", 0x002600, -0.31, 0x22ff55);
     };
 
-    control.lights = {
-      red: makeLamp(redMat, 0.31),
-      yellow: makeLamp(yellowMat, 0),
-      green: makeLamp(greenMat, -0.31)
-    };
+    addSignalHead(5.8, 6.4, Math.PI, "northsouth");
+    addSignalHead(-5.8, -6.4, 0, "northsouth");
+    addSignalHead(6.4, -5.8, -Math.PI / 2, "eastwest");
+    addSignalHead(-6.4, 5.8, Math.PI / 2, "eastwest");
     return group;
   }
 
@@ -865,6 +1093,7 @@ export class TrafficSystem {
   //     enclosed by walls. Catches edge cases the vertical ray may miss.
 
   _isPositionOnRoad(pos) {
+    if (!this._isAkronRoadPosition(pos)) return false;
     if (!physics.ready || !physics.world) return true; // no physics = assume valid
 
     const _filter = this._trafficRayFilter;
@@ -1187,6 +1416,10 @@ export class TrafficSystem {
 
       // --- Apply kinematic movement ---
       this._applyMovement(vehicle, dt);
+      if (!this._isPositionOnRoad(vehicle.mesh.position)) {
+        this._relocateToValidWaypoint(vehicle, playerPos);
+        continue;
+      }
 
       // --- RTC_CarController.VehicleLights (Update) ---
       this._updateLights(vehicle, dt);
@@ -1215,28 +1448,43 @@ export class TrafficSystem {
 
   _signalState(control, approachPhase = control?.phase) {
     if (!control || control.type !== "signal") return "none";
-    const halfCycle = SIGNAL_CYCLE / 2;
     const phaseTime = this._signalTime % SIGNAL_CYCLE;
-    const activePhase = phaseTime < halfCycle ? "northsouth" : "eastwest";
-    const timeInPhase = phaseTime < halfCycle ? phaseTime : phaseTime - halfCycle;
+    const activePhase = phaseTime < SIGNAL_PHASE ? "northsouth" : "eastwest";
+    const timeInPhase = phaseTime < SIGNAL_PHASE ? phaseTime : phaseTime - SIGNAL_PHASE;
     if (approachPhase !== activePhase) return "red";
-    return timeInPhase > halfCycle - SIGNAL_YELLOW ? "yellow" : "green";
+    return timeInPhase >= SIGNAL_GREEN ? "yellow" : "green";
   }
 
   _updateTrafficSignalVisuals() {
     for (const signal of this._signals) {
       if (!signal.lights) continue;
-      const stateName = this._signalState(signal);
-      signal.lights.red.emissiveIntensity = stateName === "red" ? 1.8 : 0.18;
-      signal.lights.yellow.emissiveIntensity = stateName === "yellow" ? 1.8 : 0.08;
-      signal.lights.green.emissiveIntensity = stateName === "green" ? 1.8 : 0.08;
+      const setLamp = (lamp, lit) => {
+        if (Array.isArray(lamp)) {
+          for (const item of lamp) setLamp(item, lit);
+          return;
+        }
+        if (!lamp) return;
+        const material = lamp.material || lamp;
+        const darkColor = lamp.darkColor ?? material.color?.getHex?.();
+        const litColor = lamp.litColor ?? material.emissive?.getHex?.() ?? 0xffffff;
+        if (material.color) material.color.setHex(lit ? litColor : darkColor);
+        if (material.emissive) {
+          material.emissive.setHex(litColor);
+          material.emissiveIntensity = lit ? 3.4 : 0.08;
+        }
+        if (lamp.glow?.material) lamp.glow.material.opacity = lit ? 0.5 : 0;
+      };
+      for (const lamp of signal.lights.red || []) setLamp(lamp, this._signalState(signal, lamp.phase) === "red");
+      for (const lamp of signal.lights.yellow || []) setLamp(lamp, this._signalState(signal, lamp.phase) === "yellow");
+      for (const lamp of signal.lights.green || []) setLamp(lamp, this._signalState(signal, lamp.phase) === "green");
     }
   }
 
   _approachingControlledWaypoint(vehicle) {
     const next = vehicle.nextWaypoint;
-    if (!next?.control) return null;
-    const toControl = _tv[0].subVectors(next.position, vehicle.mesh.position);
+    const controlledWaypoint = next?.control ? next : (vehicle.currentWaypoint?.control ? vehicle.currentWaypoint : null);
+    if (!controlledWaypoint) return null;
+    const toControl = _tv[0].subVectors(controlledWaypoint.position, vehicle.mesh.position);
     const distance = toControl.length();
     if (distance > CONTROL_LOOKAHEAD) return null;
 
@@ -1246,7 +1494,7 @@ export class TrafficSystem {
       return null;
     }
 
-    return { control: next.control, approachPhase: next.controlApproach, distance };
+    return { control: controlledWaypoint.control, approachPhase: controlledWaypoint.controlApproach, distance };
   }
 
   _applyTrafficControl(vehicle, dt) {
@@ -1362,11 +1610,37 @@ export class TrafficSystem {
     }
     vehicle.pastWaypoint = vehicle.currentWaypoint;
     vehicle.currentWaypoint = vehicle.nextWaypoint;
-    if (vehicle.currentWaypoint && vehicle.currentWaypoint.nextWaypoint) {
+    if (vehicle.pendingIntersectionExit?.at === vehicle.currentWaypoint) {
+      vehicle.nextWaypoint = vehicle.pendingIntersectionExit.nextWaypoint;
+      if (Number.isInteger(vehicle.pendingIntersectionExit.laneIndex)) {
+        vehicle.laneIndex = vehicle.pendingIntersectionExit.laneIndex;
+      }
+      vehicle.pendingIntersectionExit = null;
+    } else if (vehicle.currentWaypoint?.nextOptions?.length) {
+      const options = vehicle.currentWaypoint.nextOptions;
+      const totalWeight = options.reduce((sum, option) => sum + option.weight, 0);
+      let pick = Math.random() * totalWeight;
+      let selected = options[0];
+      for (const option of options) {
+        pick -= option.weight;
+        if (pick <= 0) {
+          selected = option;
+          break;
+        }
+      }
+      vehicle.nextWaypoint = selected.waypoint;
+      vehicle.pendingIntersectionExit = selected.nextWaypoint
+        ? { at: selected.waypoint, nextWaypoint: selected.nextWaypoint, laneIndex: selected.laneIndex }
+        : null;
+      if (Number.isInteger(selected.laneIndex)) vehicle.laneIndex = selected.laneIndex;
+    } else if (vehicle.currentWaypoint && vehicle.currentWaypoint.nextWaypoint) {
       vehicle.nextWaypoint = vehicle.currentWaypoint.nextWaypoint;
+      vehicle.pendingIntersectionExit = null;
+      if (Number.isInteger(vehicle.currentWaypoint.laneIndex)) vehicle.laneIndex = vehicle.currentWaypoint.laneIndex;
     } else if (vehicle.currentWaypoint) {
       // Reached end of lane — try to transition to next lane
       vehicle.nextWaypoint = null;
+      vehicle.pendingIntersectionExit = null;
       this._transitionToNextLane(vehicle);
     }
   }
@@ -1500,6 +1774,11 @@ export class TrafficSystem {
     } else {
       vehicle.steerInputRaw = 0;
     }
+
+    const isIntersectionTurn = this._isIntersectionTurn(vehicle);
+    if (!isIntersectionTurn) {
+      vehicle.steerInputRaw = THREE.MathUtils.clamp(vehicle.steerInputRaw, -0.28, 0.28);
+    }
   }
 
   // --- Obstacle detection (RTC_CarController.Raycasts) -----------------------
@@ -1555,7 +1834,7 @@ export class TrafficSystem {
     // buildings/walls. Casts rays in forward + ±30° directions against
     // static scene geometry. The fan catches walls during turns that a
     // single center ray would miss.
-    if (physics.ready && physics.world) {
+    if (ENABLE_TRAFFIC_WALL_AVOIDANCE && physics.ready && physics.world) {
       const pos = vehicle.mesh.position;
       const rayOrigin = { x: pos.x, y: pos.y + 0.5, z: pos.z };
       const fwd = { x: forward.x, y: 0, z: forward.z };
@@ -1754,36 +2033,21 @@ export class TrafficSystem {
     }
   }
 
-  // --- Stuck detection (RTC_CarController.Reverse coroutine) -----------------
+  // --- Stuck detection -------------------------------------------------------
 
   _checkStuck(vehicle, dt) {
-    if (vehicle.reversingNow) {
-      vehicle.reverseTimer += dt;
-      if (vehicle.reverseTimer >= REVERSE_DURATION || vehicle.currentSpeed >= 25) {
-        vehicle.reversingNow = false;
-        vehicle.reverseTimer = 0;
-        vehicle.stuckTime = 0;
-        vehicle.direction = 1;
-      }
-      return;
-    }
-
-    if (vehicle.currentSpeed <= STUCK_SPEED_THRESHOLD && vehicle.throttleInput > 0.1) {
-      vehicle.stuckTime += dt;
-      if (vehicle.stuckTime >= STUCK_TIME_BEFORE_REVERSE) {
-        vehicle.reversingNow = true;
-        vehicle.reverseTimer = 0;
-        vehicle.direction = -1;
-      }
-    } else {
-      vehicle.stuckTime = 0;
-    }
+    vehicle.reversingNow = false;
+    vehicle.direction = 1;
+    vehicle.stuckTime = 0;
+    vehicle.reverseTimer = 0;
   }
 
   // --- Kinematic movement (simulates WheelCollider physics) ------------------
 
   _applyMovement(vehicle, dt) {
     let speedMs = vehicle.currentSpeed / 3.6;
+    const isIntersectionTurn = this._isIntersectionTurn(vehicle);
+    const laneSegment = this._currentLaneSegment(vehicle);
 
     if (vehicle.reversingNow) {
       // RTC_CarController.Reverse: direction = -1, throttle = 1, steer = 1
@@ -1805,11 +2069,26 @@ export class TrafficSystem {
 
     vehicle.currentSpeed = Math.abs(speedMs) * 3.6;
 
+    if (!isIntersectionTurn && laneSegment) {
+      const laneDir = _tv[6].subVectors(laneSegment.to, laneSegment.from);
+      laneDir.y = 0;
+      if (laneDir.lengthSq() > 0.001) {
+        laneDir.normalize();
+        const projected = this._projectPointToSegment(vehicle.mesh.position, laneSegment.from, laneSegment.to);
+        vehicle.mesh.position.x = projected.x;
+        vehicle.mesh.position.z = projected.z;
+        const laneHeading = Math.atan2(laneDir.x, laneDir.z);
+        let headingDelta = laneHeading - vehicle.mesh.rotation.y;
+        headingDelta = ((headingDelta + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+        vehicle.mesh.rotation.y += headingDelta * Math.min(1, dt * 8);
+      }
+    }
+
     // Steering via bicycle model
     // steerAngle = 40°, wheelBase ≈ 2.8m
     // Reduce effective steer angle at higher speeds to prevent oscillation.
     // At low speed, full 40° is fine; at ~80 km/h, limit to ~15°.
-    if (Math.abs(speedMs) > 0.1) {
+    if (isIntersectionTurn && Math.abs(speedMs) > 0.1) {
       const speedFactor = THREE.MathUtils.clamp(Math.abs(speedMs) / 22, 0, 1); // 22 m/s ≈ 80 km/h
       const effectiveAngle = THREE.MathUtils.lerp(STEER_ANGLE, 15, speedFactor);
       const maxSteerRad = effectiveAngle * (Math.PI / 180);
@@ -1821,7 +2100,11 @@ export class TrafficSystem {
 
     // Forward movement — flatten to XZ plane to prevent flying
     const forward = _tv[0].set(0, 0, 1).applyQuaternion(vehicle.mesh.quaternion);
+    if (!isIntersectionTurn && laneSegment) {
+      forward.subVectors(laneSegment.to, laneSegment.from);
+    }
     forward.y = 0;
+    if (forward.lengthSq() > 0.001) forward.normalize();
 
     const _moveFilter = (collider) => {
       const parentHandle = collider.parent()?.handle;
@@ -1836,6 +2119,16 @@ export class TrafficSystem {
     const moveX = forward.x * speedMs * vehicle.direction * dt;
     const moveZ = forward.z * speedMs * vehicle.direction * dt;
     let blocked = false;
+    const currentPos = vehicle.mesh.position;
+    const candidatePos = _tv[7].set(currentPos.x + moveX, currentPos.y, currentPos.z + moveZ);
+    if (!this._isAkronRoadPosition(candidatePos)) {
+      const clamped = this._clampAkronRoadPosition(candidatePos);
+      vehicle.mesh.position.x = clamped.x;
+      vehicle.mesh.position.z = clamped.z;
+      vehicle.currentSpeed = Math.min(vehicle.currentSpeed, 8);
+      speedMs = vehicle.currentSpeed / 3.6;
+      blocked = true;
+    }
     if (physics.ready && physics.world && Math.abs(speedMs) > 0.5) {
       const candX = vehicle.mesh.position.x + moveX;
       const candZ = vehicle.mesh.position.z + moveZ;
@@ -1891,7 +2184,7 @@ export class TrafficSystem {
       vehicle.mesh.position.z += moveZ;
     } else {
       // Would enter building — hard brake
-      vehicle.currentSpeed = 0;
+      vehicle.currentSpeed = Math.min(vehicle.currentSpeed, 8);
       speedMs = 0;
     }
 
@@ -1920,9 +2213,23 @@ export class TrafficSystem {
         }
       }
       if (!pushBlocked) {
-        vehicle.mesh.position.x += pushDx;
-        vehicle.mesh.position.z += pushDz;
+        const pushCandidate = _tv[7].set(
+          vehicle.mesh.position.x + pushDx,
+          vehicle.mesh.position.y,
+          vehicle.mesh.position.z + pushDz
+        );
+        if (this._isAkronRoadPosition(pushCandidate)) {
+          vehicle.mesh.position.x += pushDx;
+          vehicle.mesh.position.z += pushDz;
+        }
       }
+    }
+
+    if (!this._isAkronRoadPosition(vehicle.mesh.position)) {
+      const clamped = this._clampAkronRoadPosition(vehicle.mesh.position);
+      vehicle.mesh.position.x = clamped.x;
+      vehicle.mesh.position.z = clamped.z;
+      vehicle.currentSpeed = Math.min(vehicle.currentSpeed, 8);
     }
 
     // Ground clamping via downward raycast — finds actual ground height
@@ -2141,6 +2448,7 @@ export class TrafficSystem {
         vehicle.currentWaypoint = wp;
         vehicle.nextWaypoint = wp.nextWaypoint;
         vehicle.pastWaypoint = wp.previousWaypoint;
+        vehicle.pendingIntersectionExit = null;
         vehicle.currentSpeed = INITIAL_VELOCITY_MS * 3.6;
         vehicle.stuckTime = 0;
         vehicle.reversingNow = false;
@@ -2223,6 +2531,7 @@ export class TrafficSystem {
     vehicle.nextWaypoint = bestWp.nextWaypoint;
     vehicle.pastWaypoint = bestWp.previousWaypoint;
     vehicle.laneIndex = bestLaneIdx;
+    vehicle.pendingIntersectionExit = null;
     vehicle.currentSpeed = INITIAL_VELOCITY_MS * 3.6;
     vehicle.stuckTime = 0;
     vehicle.reversingNow = false;

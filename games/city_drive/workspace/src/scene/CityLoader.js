@@ -37,6 +37,7 @@ export function configureCityLoader({ setPresentationMode } = {}) {
 
 const stageTextureCache = new Map();
 const cityTextureCache = new Map();
+let menuSceneBounds = null;
 const REMOTE_MENU_SCENE_URL =
   "https://static.seeles.ai/data/upload/1c58023f-f617-45c3-a36d-f0f95705a890_RCCP_City.FBX";
 const REMOTE_LOAD_CANDIDATES = {
@@ -53,6 +54,16 @@ const REMOTE_ROOT_CANDIDATES = {
 const EXPANDED_CITY_SIZE = 920;
 const EXPANDED_CITY_ROAD_SPACING = 92;
 const EXPANDED_CITY_ROAD_WIDTH = 16;
+const TERRAIN_MATERIAL_HINTS = [
+  "asphalt",
+  "road",
+  "sidewalk",
+  "pavement",
+  "parking",
+  "grass",
+  "ground",
+  "plane"
+];
 
 const CITY_MATERIAL_LIBRARY = {
   asphalt: {
@@ -209,6 +220,7 @@ export function applyCityMaterialLibrary(target) {
     materials.forEach((material) => {
       const matName = String(material.name || "").toLowerCase();
       const config = CITY_MATERIAL_LIBRARY[matName];
+      const terrainLike = TERRAIN_MATERIAL_HINTS.some((hint) => matName.includes(hint));
       if (!config) return;
       if (config.map) {
         material.map = sceneTexture(config.map, {
@@ -227,6 +239,26 @@ export function applyCityMaterialLibrary(target) {
       }
       if ("roughness" in material && typeof config.roughness === "number") material.roughness = config.roughness;
       if ("metalness" in material && typeof config.metalness === "number") material.metalness = config.metalness;
+      if (terrainLike) material.side = THREE.DoubleSide;
+      material.needsUpdate = true;
+    });
+  });
+}
+
+function stabilizeTerrainRendering(target) {
+  target.traverse((child) => {
+    if (!child.isMesh) return;
+    const name = `${child.name || ""} ${child.material?.name || ""}`.toLowerCase();
+    const terrainLike = TERRAIN_MATERIAL_HINTS.some((hint) => name.includes(hint));
+    if (!terrainLike) return;
+
+    child.frustumCulled = false;
+    child.renderOrder = Math.min(child.renderOrder || 0, -5);
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    materials.forEach((material) => {
+      if (!material) return;
+      material.side = THREE.DoubleSide;
+      material.depthWrite = true;
       material.needsUpdate = true;
     });
   });
@@ -291,9 +323,9 @@ function createFallbackCityScene() {
   const group = new THREE.Group();
   group.name = "Fallback_City";
 
-  const roadMat = new THREE.MeshStandardMaterial({ name: "asphalt", color: 0x45484d, roughness: 0.88 });
+  const roadMat = new THREE.MeshStandardMaterial({ name: "asphalt", color: 0x45484d, roughness: 0.88, side: THREE.DoubleSide });
   const blockMat = new THREE.MeshStandardMaterial({ name: "concrete", color: 0x7a7d75, roughness: 0.92 });
-  const grassMat = new THREE.MeshStandardMaterial({ name: "grass", color: 0x5f7f3a, roughness: 1 });
+  const grassMat = new THREE.MeshStandardMaterial({ name: "grass", color: 0x5f7f3a, roughness: 1, side: THREE.DoubleSide });
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(220, 220), grassMat);
   ground.name = "Ground";
@@ -340,10 +372,11 @@ function createExpandedCityMap() {
   group.name = "Expanded_City_Map";
 
   const surfaceY = MAIN_MENU_SPAWN.y - 0.92;
-  const roadMat = new THREE.MeshStandardMaterial({ name: "expanded_asphalt", color: 0x383b3f, roughness: 0.9, metalness: 0.02 });
-  const grassMat = new THREE.MeshStandardMaterial({ name: "expanded_grass", color: 0x647d3f, roughness: 1 });
+  const roadMat = new THREE.MeshStandardMaterial({ name: "expanded_asphalt", color: 0x383b3f, roughness: 0.9, metalness: 0.02, side: THREE.DoubleSide });
+  const grassMat = new THREE.MeshStandardMaterial({ name: "expanded_grass", color: 0x647d3f, roughness: 1, side: THREE.DoubleSide });
   const curbMat = new THREE.MeshStandardMaterial({ name: "expanded_curb", color: 0xbeb8a7, roughness: 0.94 });
   const buildingMat = new THREE.MeshStandardMaterial({ name: "expanded_building", color: 0x777b7f, roughness: 0.86, metalness: 0.04 });
+  const lineMat = new THREE.MeshBasicMaterial({ name: "expanded_yellow_centerline", color: 0xffd322, side: THREE.DoubleSide });
 
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(EXPANDED_CITY_SIZE, EXPANDED_CITY_SIZE), grassMat);
   ground.name = "Expanded_Ground";
@@ -361,12 +394,26 @@ function createExpandedCityMap() {
     roadEastWest.receiveShadow = true;
     group.add(roadEastWest);
 
+    const lineEastWest = new THREE.Mesh(new THREE.PlaneGeometry(EXPANDED_CITY_SIZE, 0.46), lineMat.clone());
+    lineEastWest.name = "Expanded_Yellow_Centerline_EW";
+    lineEastWest.rotation.x = -Math.PI / 2;
+    lineEastWest.position.set(MAIN_MENU_SPAWN.x, surfaceY + 0.035, MAIN_MENU_SPAWN.z + offset);
+    lineEastWest.renderOrder = -4;
+    group.add(lineEastWest);
+
     const roadNorthSouth = new THREE.Mesh(new THREE.PlaneGeometry(EXPANDED_CITY_ROAD_WIDTH, EXPANDED_CITY_SIZE), roadMat.clone());
     roadNorthSouth.name = "Expanded_Road_NS";
     roadNorthSouth.rotation.x = -Math.PI / 2;
     roadNorthSouth.position.set(MAIN_MENU_SPAWN.x + offset, surfaceY + 0.01, MAIN_MENU_SPAWN.z);
     roadNorthSouth.receiveShadow = true;
     group.add(roadNorthSouth);
+
+    const lineNorthSouth = new THREE.Mesh(new THREE.PlaneGeometry(0.46, EXPANDED_CITY_SIZE), lineMat.clone());
+    lineNorthSouth.name = "Expanded_Yellow_Centerline_NS";
+    lineNorthSouth.rotation.x = -Math.PI / 2;
+    lineNorthSouth.position.set(MAIN_MENU_SPAWN.x + offset, surfaceY + 0.045, MAIN_MENU_SPAWN.z);
+    lineNorthSouth.renderOrder = -4;
+    group.add(lineNorthSouth);
 
     [-1, 1].forEach((side) => {
       const curb = new THREE.Mesh(new THREE.BoxGeometry(EXPANDED_CITY_SIZE, 0.16, 0.32), curbMat);
@@ -398,6 +445,7 @@ function createExpandedCityMap() {
 function attachExpandedCityMap(model) {
   if (!model || model.getObjectByName("Expanded_City_Map")) return;
   const expansion = createExpandedCityMap();
+  stabilizeTerrainRendering(expansion);
   world.menuBackdrop.add(expansion);
   world.menuBackdrop.updateMatrixWorld(true);
   model.updateMatrixWorld(true);
@@ -711,6 +759,7 @@ export function cloneMenuScene(source) {
   const model = source.clone(true);
   normalizeModel(model);
   applyCityMaterialLibrary(model);
+  stabilizeTerrainRendering(model);
   return model;
 }
 
@@ -737,6 +786,7 @@ export function placeMenuScene(model) {
 export function logMenuSceneBounds(model) {
   const box = new THREE.Box3().setFromObject(model);
   if (!Number.isFinite(box.min.x)) return;
+  menuSceneBounds = box;
 }
 
 // lowestHit: when true, iterate hits from bottom up and return the LOWEST
@@ -761,7 +811,7 @@ export function getMenuSurfaceHeight(
   if (!assets.menuScene) return null;
   assets.menuScene.updateMatrixWorld(true);
 
-  const bounds = new THREE.Box3().setFromObject(assets.menuScene);
+  const bounds = menuSceneBounds || new THREE.Box3().setFromObject(assets.menuScene);
   if (!Number.isFinite(bounds.min.x)) return null;
 
   const rayOrigin = new THREE.Vector3(

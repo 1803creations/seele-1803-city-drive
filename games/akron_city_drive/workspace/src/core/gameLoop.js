@@ -39,7 +39,7 @@ import {
   updatePursuitMission
 } from "../missions/MissionRuntime.js";
 import { getMissionTarget } from "../missions/MissionLayouts.js";
-import { getMenuSurfaceHeight } from "../scene/CityLoader.js";
+import { getMenuSurfaceHeight, updateAkronSceneTrafficLights } from "../scene/CityLoader.js";
 import { currentMission, currentSceneMissionLayouts, currentVehicleDynamics, statsFor } from "./selectors.js";
 import { ensureCarVisibleState } from "../vehicle/VehicleAssembly.js";
 import { updateHud } from "../ui/HUD.js";
@@ -55,6 +55,8 @@ const _camEuler = new THREE.Euler();
 const _camTarget = new THREE.Vector3();
 const _camPosition = new THREE.Vector3();
 const _camTargetUp = new THREE.Vector3();
+const _camCarForward = new THREE.Vector3();
+const _camCarQuaternion = new THREE.Quaternion();
 const _terrainProbe = new THREE.Vector3();
 const _bodyTranslation = { x: 0, y: 0, z: 0 };
 
@@ -125,6 +127,7 @@ const BEACON_ANGLE_OFFSETS = {
 const BEACON_HIGHLIGHT_DISTANCE = 22;
 const BEACON_ENTER_DISTANCE = 12;
 const BEACON_CLEAR_DISTANCE = 28;
+let _gameplayCameraYaw = 0;
 
 export function spawnMissionBeacons() {
   clearMissionBeacons();
@@ -233,13 +236,40 @@ function _updateBeaconProximity() {
 
 export function gameplayCameraOffset() {
   return state.gameCameraMode === "close"
-    ? _camOffset.set(0, 1.65, -2.85)
-    : _camOffset.set(0, 2.15, -6.8);
+    ? _camOffset.set(0, 1.65, 2.85)
+    : _camOffset.set(0, 2.15, 6.8);
 }
 
-export function updateGameplayCamera(immediate = false) {
+function getGameplayCameraYaw() {
+  const sourceRotation = physics.carBody?.rotation?.();
+  if (sourceRotation) {
+    _camCarQuaternion.set(sourceRotation.x, sourceRotation.y, sourceRotation.z, sourceRotation.w);
+  } else {
+    world.carPivot.getWorldQuaternion(_camCarQuaternion);
+  }
+  _camCarForward.set(0, 0, -1).applyQuaternion(_camCarQuaternion);
+  _camCarForward.y = 0;
+  if (_camCarForward.lengthSq() < 0.0001) return state.game.heading ?? world.carPivot.rotation.y ?? 0;
+  _camCarForward.normalize();
+  return Math.atan2(-_camCarForward.x, -_camCarForward.z);
+}
+
+export function updateGameplayCamera(immediate = false, dt = 1 / 60) {
   if (state.route !== "game") return;
-  const offset = gameplayCameraOffset().applyEuler(_camEuler.set(0, state.game.heading, 0));
+  const carYaw = getGameplayCameraYaw();
+  state.game.heading = carYaw;
+  if (immediate) {
+    _gameplayCameraYaw = carYaw;
+  } else {
+    const yawDelta = THREE.MathUtils.euclideanModulo(
+      carYaw - _gameplayCameraYaw + Math.PI,
+      Math.PI * 2
+    ) - Math.PI;
+    const snapBehind = Math.abs(yawDelta) > Math.PI * 0.75;
+    const yawFollow = 1 - Math.exp(-dt * (snapBehind ? 18 : 8.5));
+    _gameplayCameraYaw += yawDelta * yawFollow;
+  }
+  const offset = gameplayCameraOffset().applyEuler(_camEuler.set(0, _gameplayCameraYaw, 0));
   _camTarget.copy(world.carPivot.position).add(_camTargetUp.set(0, 1.5, 0));
   _camPosition.copy(world.carPivot.position).add(offset);
   if (physics.cameraShake > 0) {
@@ -252,9 +282,12 @@ export function updateGameplayCamera(immediate = false) {
     camera.position.copy(_camPosition);
     controls.target.copy(_camTarget);
   } else {
-    camera.position.lerp(_camPosition, 0.12);
-    controls.target.lerp(_camTarget, 0.18);
+    const cameraFollow = 1 - Math.exp(-dt * 7.5);
+    const targetFollow = 1 - Math.exp(-dt * 10);
+    camera.position.lerp(_camPosition, cameraFollow);
+    controls.target.lerp(_camTarget, targetFollow);
   }
+  camera.lookAt(controls.target);
 }
 
 export function updateReflections() {
@@ -496,8 +529,8 @@ export function updateGame(dt) {
   const right = keys.get("KeyD") || keys.get("ArrowRight");
   const handbrake = keys.get("Space");
   const nos = keys.get("ShiftLeft") || keys.get("KeyN");
-  const throttleInput = (backward ? 0.7 : 0) - (forward ? 1 : 0);
-  const steerInput = (right ? 1 : 0) - (left ? 1 : 0);
+  const throttleInput = (forward ? 1 : 0) - (backward ? 0.7 : 0);
+  const steerInput = (left ? 1 : 0) - (right ? 1 : 0);
 
   // Headlight toggle (L key — one-shot per press)
   if (keys.get("KeyL")) {
@@ -563,7 +596,7 @@ export function updateGame(dt) {
 
   const t6 = profiling ? performance.now() : 0;
 
-  updateGameplayCamera();
+  updateGameplayCamera(false, dt);
 
   if (state.game.missionTimeRemaining >= 0) {
     state.game.missionTimeRemaining = Math.max(0, state.game.missionTimeRemaining - dt);
@@ -703,6 +736,7 @@ export function animate(time) {
     const frameStart = performance.now();
     const dt = clock.getDelta();
 
+    updateAkronSceneTrafficLights(dt);
     if (assets.loaded && ["garage", "customize", "mission", "settings"].includes(state.route)) world.carPivot.rotation.y += 0.12 * dt;
 
     const aT1 = performance.now();
